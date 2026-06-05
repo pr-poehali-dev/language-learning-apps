@@ -1,9 +1,38 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
 
-type Screen = "home" | "lesson" | "quiz" | "dialogue" | "result";
+type Screen = "home" | "lesson" | "quiz" | "dialogue" | "result" | "profile";
 type Language = "english" | "spanish" | "french";
 type Theme = "dark" | "light";
+
+// ─── localStorage persist hook ───────────────────────────────────────────────
+function usePersist<T>(key: string, initial: T): [T, (v: T | ((prev: T) => T)) => void] {
+  const [state, setStateRaw] = useState<T>(() => {
+    try {
+      const stored = localStorage.getItem(key);
+      return stored ? (JSON.parse(stored) as T) : initial;
+    } catch { return initial; }
+  });
+  const setState = useCallback((v: T | ((prev: T) => T)) => {
+    setStateRaw((prev) => {
+      const next = typeof v === "function" ? (v as (p: T) => T)(prev) : v;
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch (e) { void e; }
+      return next;
+    });
+  }, [key]);
+  return [state, setState];
+}
+
+// ─── Streak helper ────────────────────────────────────────────────────────────
+function getTodayStr() { return new Date().toISOString().slice(0, 10); }
+function calcStreak(lastDay: string, streakCount: number): { streak: number; lastDay: string } {
+  const today = getTodayStr();
+  if (lastDay === today) return { streak: streakCount, lastDay };
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  const yStr = yesterday.toISOString().slice(0, 10);
+  if (lastDay === yStr) return { streak: streakCount + 1, lastDay: today };
+  return { streak: 1, lastDay: today };
+}
 
 interface Word {
   word: string;
@@ -398,12 +427,19 @@ function LightBackground() {
 
 export default function Index() {
   const [screen, setScreen] = useState<Screen>("home");
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [selectedLang, setSelectedLang] = useState<Language>("english");
-  const [xp, setXp] = useState(120);
-  const [streak] = useState(5);
+  const [theme, setTheme] = usePersist<Theme>("lq_theme", "dark");
+  const [selectedLang, setSelectedLang] = usePersist<Language>("lq_lang", "english");
+  const [xp, setXp] = usePersist<number>("lq_xp", 0);
+  const [gems, setGems] = usePersist<number>("lq_gems", 0);
+  const [streak, setStreak] = usePersist<number>("lq_streak", 0);
+  const [lastStreakDay, setLastStreakDay] = usePersist<string>("lq_streak_day", "");
+  const [completedLessons, setCompletedLessons] = usePersist<Record<Language, number[]>>("lq_done", { english: [], spanish: [], french: [] });
+  const [totalQuizCorrect, setTotalQuizCorrect] = usePersist<number>("lq_quiz_correct", 0);
+  const [totalLessonsFinished, setTotalLessonsFinished] = usePersist<number>("lq_lessons_fin", 0);
+  const [totalDialogues, setTotalDialogues] = usePersist<number>("lq_dialogues", 0);
+  const [userName, setUserName] = usePersist<string>("lq_name", "");
+
   const [lives, setLives] = useState(3);
-  const [gems, setGems] = useState(47);
   const [lessonIdx, setLessonIdx] = useState(0);
   const [wordIdx, setWordIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
@@ -414,8 +450,15 @@ export default function Index() {
   const [showTranslation, setShowTranslation] = useState<number | null>(null);
   const [floats, setFloats] = useState<XpFloatItem[]>([]);
   const [showReward, setShowReward] = useState(false);
-  const [completedLessons, setCompletedLessons] = useState<number[]>([]);
   const floatId = useRef(0);
+
+  // Обновляем серию при первом входе
+  useEffect(() => {
+    const { streak: newStreak, lastDay } = calcStreak(lastStreakDay, streak);
+    if (newStreak !== streak) setStreak(newStreak);
+    if (lastDay !== lastStreakDay) setLastStreakDay(lastDay);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isLight = theme === "light";
 
@@ -440,6 +483,7 @@ export default function Index() {
       addXpFloat(e, "+10 XP ⭐");
       setXp((x) => x + 10);
       setCorrect((c) => c + 1);
+      setTotalQuizCorrect((n) => n + 1);
     } else {
       setLives((l) => Math.max(0, l - 1));
     }
@@ -464,7 +508,11 @@ export default function Index() {
       addXpFloat(e, "+50 XP 🎉");
       setXp((x) => x + 50);
       setGems((g) => g + 3);
-      if (!completedLessons.includes(lessonIdx)) setCompletedLessons((l) => [...l, lessonIdx]);
+      const langDone = completedLessons[selectedLang] ?? [];
+      if (!langDone.includes(lessonIdx)) {
+        setCompletedLessons((prev) => ({ ...prev, [selectedLang]: [...(prev[selectedLang] ?? []), lessonIdx] }));
+        setTotalLessonsFinished((n) => n + 1);
+      }
       setShowReward(true);
       setTimeout(() => { setShowReward(false); setScreen("home"); setWordIdx(0); setFlipped(false); }, 2000);
     }
@@ -546,10 +594,12 @@ export default function Index() {
           <HomeScreen T={T} isLight={isLight} theme={theme} setTheme={setTheme}
             lang={selectedLang} xp={xp} xpProgress={xpProgress} level={level}
             streak={streak} gems={gems} lives={lives} lessons={currentLessons}
-            completedLessons={completedLessons} onSelectLang={setSelectedLang}
+            completedLessons={completedLessons[selectedLang] ?? []}
+            onSelectLang={setSelectedLang}
             onStartLesson={(idx) => { setLessonIdx(idx); setWordIdx(0); setFlipped(false); setScreen("lesson"); }}
             onStartQuiz={resetQuiz}
             onStartDialogue={() => { setDialogueStep(0); setShowTranslation(null); setScreen("dialogue"); }}
+            onGoProfile={() => setScreen("profile")}
           />
         )}
         {screen === "lesson" && currentWord && (
@@ -570,7 +620,7 @@ export default function Index() {
             lang={selectedLang} showTranslation={showTranslation}
             onNext={() => {
               if (dialogueStep + 1 < dialogue.length) { setDialogueStep((s) => s + 1); }
-              else { setXp((x) => x + 30); setGems((g) => g + 2); setShowReward(true); setTimeout(() => { setShowReward(false); setScreen("home"); }, 2000); }
+              else { setXp((x) => x + 30); setGems((g) => g + 2); setTotalDialogues((n) => n + 1); setShowReward(true); setTimeout(() => { setShowReward(false); setScreen("home"); }, 2000); }
             }}
             onSpeak={(text) => speakText(text, selectedLang)}
             onToggleTranslation={(idx) => setShowTranslation(showTranslation === idx ? null : idx)}
@@ -580,6 +630,25 @@ export default function Index() {
         {screen === "result" && (
           <ResultScreen T={T} isLight={isLight} correct={correct} total={quizQuestions.length}
             xpEarned={correct * 10} onRetry={resetQuiz} onHome={() => setScreen("home")}
+          />
+        )}
+        {screen === "profile" && (
+          <ProfileScreen T={T} isLight={isLight}
+            xp={xp} level={level} streak={streak} gems={gems}
+            userName={userName} setUserName={setUserName}
+            totalLessonsFinished={totalLessonsFinished}
+            totalQuizCorrect={totalQuizCorrect}
+            totalDialogues={totalDialogues}
+            completedLessons={completedLessons}
+            onBack={() => setScreen("home")}
+            onReset={() => {
+              if (confirm("Сбросить весь прогресс?")) {
+                setXp(0); setGems(0); setStreak(0); setLastStreakDay("");
+                setCompletedLessons({ english: [], spanish: [], french: [] });
+                setTotalQuizCorrect(0); setTotalLessonsFinished(0); setTotalDialogues(0);
+                setScreen("home");
+              }
+            }}
           />
         )}
       </div>
@@ -597,12 +666,12 @@ interface ThemeStyles {
   dialogueNative: string; dialogueUser: string; streakBanner: React.CSSProperties;
 }
 
-function HomeScreen({ T, isLight, theme, setTheme, lang, xp, xpProgress, level, streak, gems, lives, lessons, completedLessons, onSelectLang, onStartLesson, onStartQuiz, onStartDialogue }: {
+function HomeScreen({ T, isLight, theme, setTheme, lang, xp, xpProgress, level, streak, gems, lives, lessons, completedLessons, onSelectLang, onStartLesson, onStartQuiz, onStartDialogue, onGoProfile }: {
   T: ThemeStyles; isLight: boolean; theme: Theme; setTheme: (t: Theme) => void;
   lang: Language; xp: number; xpProgress: number; level: number; streak: number; gems: number; lives: number;
   lessons: typeof LESSONS["english"]; completedLessons: number[];
   onSelectLang: (l: Language) => void; onStartLesson: (idx: number) => void;
-  onStartQuiz: () => void; onStartDialogue: () => void;
+  onStartQuiz: () => void; onStartDialogue: () => void; onGoProfile: () => void;
 }) {
   return (
     <div className="max-w-md mx-auto px-4 py-6 min-h-screen">
@@ -707,8 +776,13 @@ function HomeScreen({ T, isLight, theme, setTheme, lang, xp, xpProgress, level, 
 
       {/* Bottom Nav */}
       <div className={`flex items-center justify-around py-3 ${T.navBar}`}>
-        {[{ icon: "Home" as const, label: "Главная", active: true }, { icon: "BookOpen" as const, label: "Уроки", active: false }, { icon: "Trophy" as const, label: "Рейтинг", active: false }, { icon: "User" as const, label: "Профиль", active: false }].map((item) => (
-          <button key={item.label} className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl ${item.active ? T.navActive : T.navInactive}`}>
+        {[
+          { icon: "Home" as const, label: "Главная", onClick: () => {}, active: true },
+          { icon: "BookOpen" as const, label: "Уроки", onClick: () => {}, active: false },
+          { icon: "Trophy" as const, label: "Рейтинг", onClick: () => {}, active: false },
+          { icon: "User" as const, label: "Профиль", onClick: onGoProfile, active: false },
+        ].map((item) => (
+          <button key={item.label} onClick={item.onClick} className={`flex flex-col items-center gap-1 px-3 py-1 rounded-xl ${item.active ? T.navActive : T.navInactive}`}>
             <Icon name={item.icon} size={22} />
             <span className="text-xs font-bold">{item.label}</span>
           </button>
@@ -930,6 +1004,150 @@ function ResultScreen({ T, isLight, correct, total, xpEarned, onRetry, onHome }:
           🏠 На главную
         </button>
       </div>
+    </div>
+  );
+}
+
+// ─── PROFILE ─────────────────────────────────────────────────────────────────
+
+const LANG_TOTAL: Record<Language, number> = {
+  english: 8, spanish: 6, french: 6,
+};
+
+function ProfileScreen({ T, isLight, xp, level, streak, gems, userName, setUserName,
+  totalLessonsFinished, totalQuizCorrect, totalDialogues, completedLessons, onBack, onReset }: {
+  T: ThemeStyles; isLight: boolean; xp: number; level: number; streak: number; gems: number;
+  userName: string; setUserName: (n: string) => void;
+  totalLessonsFinished: number; totalQuizCorrect: number; totalDialogues: number;
+  completedLessons: Record<Language, number[]>;
+  onBack: () => void; onReset: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(userName);
+
+  const totalDone = Object.values(completedLessons).reduce((s, arr) => s + arr.length, 0);
+  const totalAll = Object.values(LANG_TOTAL).reduce((s, n) => s + n, 0);
+  const progressPct = Math.round((totalDone / totalAll) * 100);
+
+  const ACHIEVEMENTS = [
+    { id: "first_lesson", icon: "📚", label: "Первый урок", unlocked: totalLessonsFinished >= 1 },
+    { id: "streak3", icon: "🔥", label: "3 дня подряд", unlocked: streak >= 3 },
+    { id: "streak7", icon: "⚡", label: "Неделя подряд", unlocked: streak >= 7 },
+    { id: "quiz10", icon: "🧠", label: "10 верных ответов", unlocked: totalQuizCorrect >= 10 },
+    { id: "quiz50", icon: "🎯", label: "50 верных ответов", unlocked: totalQuizCorrect >= 50 },
+    { id: "dialogue3", icon: "💬", label: "3 диалога", unlocked: totalDialogues >= 3 },
+    { id: "lessons5", icon: "🏅", label: "5 уроков", unlocked: totalLessonsFinished >= 5 },
+    { id: "xp500", icon: "🌟", label: "500 XP", unlocked: xp >= 500 },
+    { id: "allLang", icon: "🌍", label: "Все языки", unlocked: (Object.values(completedLessons) as number[][]).every((arr) => arr.length > 0) },
+  ];
+
+  return (
+    <div className="max-w-md mx-auto px-4 py-6 min-h-screen">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6 animate-slide-up">
+        <button onClick={onBack} className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${isLight ? "bg-gray-100 text-gray-500 hover:bg-gray-200" : "bg-secondary text-muted-foreground hover:text-white"}`}>
+          <Icon name="ArrowLeft" size={20} />
+        </button>
+        <div className={`text-xl font-black ${T.text}`}>Профиль</div>
+      </div>
+
+      {/* Avatar + Name */}
+      <div className="flex flex-col items-center mb-6 animate-slide-up" style={{ animationDelay: "0.05s" }}>
+        <div className="w-24 h-24 rounded-full mb-3 flex items-center justify-center text-5xl"
+          style={isLight ? { background: "linear-gradient(135deg,#bbf7d0 0%,#a5f3fc 100%)", border: "3px solid #6ee7b7" }
+            : { background: "linear-gradient(135deg,hsl(142 60% 20%) 0%,hsl(200 60% 20%) 100%)", border: "3px solid hsl(142 60% 40%)" }}>
+          🧑‍🚀
+        </div>
+        {editing ? (
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { setUserName(draft || "Путешественник"); setEditing(false); } }}
+              className={`rounded-xl px-3 py-2 font-bold text-center outline-none border-2 border-primary ${isLight ? "bg-white text-gray-900" : "bg-secondary text-white"}`}
+              maxLength={24}
+              placeholder="Твоё имя"
+            />
+            <button onClick={() => { setUserName(draft || "Путешественник"); setEditing(false); }}
+              className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-primary-foreground font-black">✓</button>
+          </div>
+        ) : (
+          <button onClick={() => { setDraft(userName); setEditing(true); }}
+            className={`flex items-center gap-2 text-lg font-black ${T.text} hover:opacity-70 transition-opacity`}>
+            {userName || "Путешественник"}
+            <Icon name="Pencil" size={14} className={T.textMuted} />
+          </button>
+        )}
+        <div className={`text-sm mt-1 ${T.textMuted}`}>Уровень {level} · {xp} XP</div>
+      </div>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-3 gap-3 mb-5 animate-slide-up" style={{ animationDelay: "0.1s" }}>
+        {[
+          { val: streak, label: "Серия дней", icon: "🔥", color: "text-orange-500" },
+          { val: gems, label: "Гемы", icon: "💎", color: "text-cyan-500" },
+          { val: totalLessonsFinished, label: "Уроков", icon: "📚", color: "text-green-500" },
+          { val: totalQuizCorrect, label: "Ответов", icon: "🧠", color: "text-purple-500" },
+          { val: totalDialogues, label: "Диалогов", icon: "💬", color: "text-blue-500" },
+          { val: level, label: "Уровень", icon: "⭐", color: "text-yellow-500" },
+        ].map((s) => (
+          <div key={s.label} className={`${T.card} p-3 text-center`}>
+            <div className="text-xl mb-1">{s.icon}</div>
+            <div className={`text-2xl font-black ${s.color}`}>{s.val}</div>
+            <div className={`text-xs mt-0.5 ${T.textMuted}`}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Overall progress */}
+      <div className={`${T.card} p-4 mb-5 animate-slide-up`} style={{ animationDelay: "0.15s" }}>
+        <div className={`font-black mb-2 ${T.text}`}>🌍 Общий прогресс</div>
+        <div className="flex justify-between text-xs mb-2">
+          <span className={T.textMuted}>Уроков пройдено</span>
+          <span className={`font-bold ${T.text}`}>{totalDone} / {totalAll}</span>
+        </div>
+        <div className={T.progressTrack}>
+          <div className={T.progressFill} style={{ width: `${progressPct}%` }} />
+        </div>
+        <div className="mt-3 flex flex-col gap-2">
+          {(Object.entries(LANGUAGES) as [Language, { name: string; flag: string }][]).map(([lang, info]) => {
+            const done = completedLessons[lang]?.length ?? 0;
+            const total = LANG_TOTAL[lang];
+            return (
+              <div key={lang} className="flex items-center gap-2">
+                <span className="text-lg">{info.flag}</span>
+                <span className={`text-xs font-bold flex-1 ${T.text}`}>{info.name}</span>
+                <span className={`text-xs ${T.textMuted}`}>{done}/{total}</span>
+                <div className="w-24 bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div className="h-full rounded-full bg-green-500 transition-all duration-700" style={{ width: `${Math.round((done / total) * 100)}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Achievements */}
+      <div className="mb-5 animate-slide-up" style={{ animationDelay: "0.2s" }}>
+        <div className={`text-xs font-black uppercase tracking-widest mb-3 ${T.textMuted}`}>🏆 Достижения</div>
+        <div className="grid grid-cols-3 gap-2">
+          {ACHIEVEMENTS.map((a) => (
+            <div key={a.id} className={`${T.card} p-3 text-center transition-all ${a.unlocked ? "" : "opacity-40 grayscale"}`}>
+              <div className="text-3xl mb-1">{a.icon}</div>
+              <div className={`text-xs font-bold leading-tight ${T.text}`}>{a.label}</div>
+              {a.unlocked && <div className="text-xs text-green-500 font-bold mt-1">✓</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Reset */}
+      <button onClick={onReset}
+        className={`w-full py-3 rounded-2xl font-bold text-sm transition-colors animate-slide-up ${isLight ? "bg-red-50 text-red-500 border border-red-200 hover:bg-red-100" : "bg-destructive/10 text-destructive border border-destructive/20 hover:bg-destructive/20"}`}
+        style={{ animationDelay: "0.25s" }}>
+        🗑 Сбросить прогресс
+      </button>
     </div>
   );
 }
