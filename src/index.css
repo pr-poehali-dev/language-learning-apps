@@ -317,6 +317,38 @@
   animation: float-up 1s ease forwards;
 }
 
+/* Light theme circle float animations */
+@keyframes float-circle-1 {
+  0%,
+  100% {
+    transform: translateY(0px) scale(1);
+  }
+  50% {
+    transform: translateY(-18px) scale(1.04);
+  }
+}
+@keyframes float-circle-2 {
+  0%,
+  100% {
+    transform: translateY(0px) translateX(0px);
+  }
+  33% {
+    transform: translateY(-12px) translateX(8px);
+  }
+  66% {
+    transform: translateY(8px) translateX(-6px);
+  }
+}
+@keyframes float-circle-3 {
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-22px);
+  }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
